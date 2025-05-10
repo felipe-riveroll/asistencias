@@ -105,14 +105,10 @@ class CheckadorApp:
         except Exception:
             Label(content, text="ⓘ", font=("Segoe UI", 24), fg=self.secondary_color, bg="white").pack(pady=(10,5))
         Label(content, text="El reporte se ha generado correctamente.", font=("Segoe UI", 11), bg="white").pack(pady=5)
-
-        # Ruta (acortada)
         short = path if len(path)<=50 else os.path.join(os.path.dirname(path)[:10]+"...", os.path.basename(path))
         pf = Frame(content, bg="white"); pf.pack(pady=5, fill="x")
         Label(pf, text="Ubicación:", font=("Segoe UI", 10), bg="white").pack(side="left")
         Label(pf, text=short, font=("Segoe UI", 9), fg="#555", bg="white").pack(side="left")
-
-        # Botones
         bf = Frame(content, bg="white"); bf.pack(fill="x", pady=10)
         def _open():
             try:
@@ -123,7 +119,6 @@ class CheckadorApp:
                 messagebox.showerror("Error", f"No se pudo abrir el archivo:\n{e}")
         Button(bf, text="Abrir archivo", font=("Segoe UI", 10), bg=self.secondary_color, fg="white", width=12, command=_open).pack(side="right", padx=5)
         Button(bf, text="Aceptar", font=("Segoe UI", 10), bg="#f0f0f0", width=10, command=dlg.destroy).pack(side="right", padx=5)
-
         dlg.transient(self.root); dlg.grab_set(); dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
         dlg.update_idletasks(); w, h = dlg.winfo_width(), dlg.winfo_height(); x = (dlg.winfo_screenwidth()-w)//2; y = (dlg.winfo_screenheight()-h)//2; dlg.geometry(f"{w}x{h}+{x}+{y}")
 
@@ -171,11 +166,24 @@ class CheckadorApp:
             chec_df=pd.DataFrame({f'Checada {i+1}':grouped['Checadas_str'].apply(lambda x:x[i] if i<len(x) else None) for i in range(max_chec)})
             report=pd.concat([grouped[['Employee Name','Shift','Day','Horas totales']], chec_df], axis=1)
             report.rename(columns={'Employee Name':'Nombre del empleado','Shift':'Turno','Day':'Día'}, inplace=True)
-            totals=(grouped.groupby('Employee Name').agg(total_timedelta=('total_timedelta','sum'), days_worked=('Day','nunique')).reset_index())
-            totals['Horas totales']=totals['total_timedelta'].apply(fmt)
+
+            # ── Totales por empleado + cálculo nuevo ──
+            summary = (grouped.groupby('Employee Name')
+                        .agg(first_day=('Day','min'), last_day=('Day','max'),
+                             days_worked=('Day','nunique'),
+                             total_timedelta=('total_timedelta','sum'))
+                        .reset_index())
+            summary['days_period'] = (summary['last_day'] - summary['first_day']).apply(lambda td: td.days + 1)
+            summary['Horas trabajadas'] = summary['total_timedelta'].apply(fmt)
+            resumen_df = summary[['Employee Name','days_period','days_worked','Horas trabajadas']].rename(columns={
+                'Employee Name':'Nombre',
+                'days_period':'Días del periodo',
+                'days_worked':'Días trabajados'})
+
+            # filas totales para hoja principal
             total_rows=[]
-            for _,r in totals.iterrows():
-                d={'Nombre del empleado':r['Employee Name'],'Turno':'Totales','Día':int(r['days_worked']),'Horas totales':r['Horas totales']}
+            for _,r in resumen_df.iterrows():
+                d={'Nombre del empleado':r['Nombre'],'Turno':'Totales','Día':int(r['Días trabajados']),'Horas totales':r['Horas trabajadas']}
                 for c in chec_df.columns: d[c]=''
                 total_rows.append(d)
             totals_df=pd.DataFrame(total_rows)
@@ -184,7 +192,12 @@ class CheckadorApp:
                 final.append(grp.sort_values('Día'))
                 final.append(totals_df[totals_df['Nombre del empleado']==emp])
             final_report=pd.concat(final, ignore_index=True)
-            final_report.to_excel(dst, index=False)
+            # Escribimos archivo base con hoja principal
+            with pd.ExcelWriter(dst, engine='openpyxl') as writer:
+                final_report.to_excel(writer, index=False, sheet_name='Detalle')
+                resumen_df.to_excel(writer, index=False, sheet_name='Resumen')
+
+            # Formatear ambas hojas
             self._format_excel(dst)
             self._toggle_busy(False); self._set_status("Reporte generado exitosamente", "success")
             self._show_success_dialog(dst)
@@ -193,23 +206,28 @@ class CheckadorApp:
 
     # ────────────  Formato Excel  ────────────
     def _format_excel(self, path):
-        wb=load_workbook(path); ws=wb.active
-        header_fill=PatternFill(start_color="3498DB", end_color="3498DB", fill_type="solid")
-        header_font=Font(color="FFFFFF", bold=True)
-        total_fill=PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
-        bold_font=Font(bold=True)
-        thin=Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        for c in range(1, ws.max_column+1):
-            cell=ws.cell(1, c); cell.fill=header_fill; cell.font=header_font; cell.border=thin
-        for r in range(2, ws.max_row+1):
-            if ws.cell(r,2).value=='Totales':
-                for c in range(1, ws.max_column+1):
-                    cell=ws.cell(r,c); cell.fill=total_fill; cell.font=bold_font; cell.border=thin
-        for col in ws.columns:
-            length=max(len(str(cell.value)) if cell.value else 0 for cell in col)+2
-            letter=col[0].column_letter
-            if letter in ['A','B','C'] and length<15: length=15
-            ws.column_dimensions[letter].width=length
+        wb=load_workbook(path)
+        def _format_ws(ws):
+            header_fill=PatternFill(start_color="3498DB", end_color="3498DB", fill_type="solid")
+            header_font=Font(color="FFFFFF", bold=True)
+            total_fill=PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+            bold_font=Font(bold=True)
+            thin=Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            for c in range(1, ws.max_column+1):
+                cell=ws.cell(1, c); cell.fill=header_fill; cell.font=header_font; cell.border=thin
+            # marcar fila Totales sólo para hoja Detalle
+            if ws.title=='Detalle':
+                for r in range(2, ws.max_row+1):
+                    if ws.cell(r,2).value=='Totales':
+                        for c in range(1, ws.max_column+1):
+                            cell=ws.cell(r,c); cell.fill=total_fill; cell.font=bold_font; cell.border=thin
+            for col in ws.columns:
+                length=max(len(str(cell.value)) if cell.value else 0 for cell in col)+2
+                letter=col[0].column_letter
+                if letter in ['A','B','C'] and length<15: length=15
+                ws.column_dimensions[letter].width=length
+        for sheet in wb.sheetnames:
+            _format_ws(wb[sheet])
         wb.save(path)
 
 if __name__ == "__main__":
