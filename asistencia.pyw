@@ -164,12 +164,37 @@ class CheckadorApp:
             grouped['Checadas_str']=grouped['checadas_list'].apply(lambda ts:[t.strftime('%H:%M:%S') for t in ts])
             max_chec=grouped['Checadas_str'].str.len().max()
             chec_df=pd.DataFrame({f'Checada {i+1}':grouped['Checadas_str'].apply(lambda x:x[i] if i<len(x) else None) for i in range(max_chec)})
+            
+            # Initial report DataFrame
             report=pd.concat([grouped[['Employee Name','Shift','Day','Horas totales']], chec_df], axis=1)
+            
+            # Rename base columns
             report.rename(columns={'Employee Name':'Nombre del empleado','Shift':'Turno','Day':'Día'}, inplace=True)
+
+            # START OF CHANGES
+            # Rename original 'Día' (which contains dates) to 'Fecha'
+            report.rename(columns={'Día': 'Fecha'}, inplace=True)
+
+            # Add new 'Día' column with Spanish day names
+            dias_semana = {
+                0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves',
+                4: 'Viernes', 5: 'Sábado', 6: 'Domingo'
+            }
+            # Ensure 'Fecha' column is datetime.date or similar that has .weekday()
+            report['Día'] = report['Fecha'].apply(
+                lambda x: dias_semana[x.weekday()] if pd.notnull(x) and hasattr(x, 'weekday') else ''
+            )
+
+            # Reorder columns: Nombre, Turno, Fecha, Día, Horas totales, Checadas...
+            core_cols = ['Nombre del empleado', 'Turno', 'Fecha', 'Día', 'Horas totales']
+            checada_cols_in_report = [col for col in report.columns if col.startswith('Checada ')]
+            final_report_columns_ordered = core_cols + checada_cols_in_report
+            report = report[final_report_columns_ordered]
+            # END OF CHANGES
 
             # ── Totales por empleado + cálculo nuevo ──
             summary = (grouped.groupby('Employee Name')
-                        .agg(first_day=('Day','min'), last_day=('Day','max'),
+                        .agg(first_day=('Day','min'), last_day=('Day','max'), # 'Day' here is original WorkDay
                              days_worked=('Day','nunique'),
                              total_timedelta=('total_timedelta','sum'))
                         .reset_index())
@@ -183,15 +208,38 @@ class CheckadorApp:
             # filas totales para hoja principal
             total_rows=[]
             for _,r in resumen_df.iterrows():
-                d={'Nombre del empleado':r['Nombre'],'Turno':'Totales','Día':int(r['Días trabajados']),'Horas totales':r['Horas trabajadas']}
-                for c in chec_df.columns: d[c]=''
+                # START OF CHANGES for total_rows dictionary
+                d = {
+                    'Nombre del empleado': r['Nombre'],
+                    'Turno': 'Totales',
+                    'Fecha': int(r['Días trabajados']), # Count of days worked goes into 'Fecha' column for totals
+                    'Día': '',                         # New 'Día' (day name) is blank for totals
+                    'Horas totales': r['Horas trabajadas']
+                }
+                # END OF CHANGES for total_rows dictionary
+                for c in chec_df.columns: # chec_df columns are 'Checada 1', 'Checada 2', ...
+                    d[c] = ''
                 total_rows.append(d)
-            totals_df=pd.DataFrame(total_rows)
+            
+            # Ensure totals_df has the same columns and order as the main report
+            totals_df = pd.DataFrame(total_rows)
+            if not totals_df.empty: # Ensure totals_df is not empty before reindexing
+                totals_df = totals_df.reindex(columns=report.columns)
+
+
             final=[]
             for emp,grp in report.groupby('Nombre del empleado', sort=False):
-                final.append(grp.sort_values('Día'))
-                final.append(totals_df[totals_df['Nombre del empleado']==emp])
-            final_report=pd.concat(final, ignore_index=True)
+                final.append(grp.sort_values('Fecha')) # Sort by 'Fecha' (the actual date)
+                # Ensure the correct totals_df slice is appended
+                current_emp_total = totals_df[totals_df['Nombre del empleado'] == emp]
+                if not current_emp_total.empty:
+                    final.append(current_emp_total)
+
+            if not final: # Handle case where report might be empty
+                final_report = pd.DataFrame(columns=report.columns)
+            else:
+                final_report=pd.concat(final, ignore_index=True)
+
             # Escribimos archivo base con hoja principal
             with pd.ExcelWriter(dst, engine='openpyxl') as writer:
                 final_report.to_excel(writer, index=False, sheet_name='Detalle')
@@ -203,6 +251,8 @@ class CheckadorApp:
             self._show_success_dialog(dst)
         except Exception as e:
             self._toggle_busy(False); self._set_status(f"Error: {e}", "error"); messagebox.showerror("Error", f"Ocurrió un error:\n{e}")
+            import traceback
+            print(traceback.format_exc()) # For debugging in console
 
     # ────────────  Formato Excel  ────────────
     def _format_excel(self, path):
@@ -213,21 +263,40 @@ class CheckadorApp:
             total_fill=PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
             bold_font=Font(bold=True)
             thin=Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+            
+            if ws.max_row == 0: # Skip formatting if sheet is empty
+                return
+
             for c in range(1, ws.max_column+1):
                 cell=ws.cell(1, c); cell.fill=header_fill; cell.font=header_font; cell.border=thin
+            
             # marcar fila Totales sólo para hoja Detalle
             if ws.title=='Detalle':
                 for r in range(2, ws.max_row+1):
-                    if ws.cell(r,2).value=='Totales':
+                    # Column B (index 2) is 'Turno'
+                    if ws.cell(r,2).value=='Totales': 
                         for c in range(1, ws.max_column+1):
                             cell=ws.cell(r,c); cell.fill=total_fill; cell.font=bold_font; cell.border=thin
-            for col in ws.columns:
-                length=max(len(str(cell.value)) if cell.value else 0 for cell in col)+2
+            
+            for col_idx, col in enumerate(ws.columns):
+                # Check if col is not empty before proceeding
+                if not col or all(c.value is None for c in col):
+                    continue
+
+                length=max(len(str(cell.value)) if cell.value is not None else 0 for cell in col)+2
                 letter=col[0].column_letter
-                if letter in ['A','B','C'] and length<15: length=15
+                
+                # START OF CHANGE for column width
+                # A: Nombre, B: Turno, C: Fecha, D: Día (new)
+                if letter in ['A','B','C','D'] and length<15: 
+                    length=15
+                elif length < 12 : # Default min width for other columns like checadas
+                    length = 12
+                # END OF CHANGE for column width
                 ws.column_dimensions[letter].width=length
-        for sheet in wb.sheetnames:
-            _format_ws(wb[sheet])
+        
+        for sheet_name in wb.sheetnames:
+            _format_ws(wb[sheet_name])
         wb.save(path)
 
 if __name__ == "__main__":
