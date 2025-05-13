@@ -165,11 +165,29 @@ class CheckadorApp:
             max_chec=grouped['Checadas_str'].str.len().max()
             chec_df=pd.DataFrame({f'Checada {i+1}':grouped['Checadas_str'].apply(lambda x:x[i] if i<len(x) else None) for i in range(max_chec)})
             
+            # Asegurarnos de que el ID de empleado (Employee) se conserva durante el procesamiento
+            # Se asume que Employee está en la tercera columna (índice 2) del archivo de entrada
+            # Extraer Employee ID y unirlo con los datos agrupados
+            if 'Employee' in df.columns:
+                # Crear un diccionario que mapee 'Employee Name' a 'Employee' (ID)
+                employee_id_map = df[['Employee Name', 'Employee']].drop_duplicates().set_index('Employee Name')['Employee'].to_dict()
+                # Añadir la columna 'Employee' (ID) al dataframe grouped
+                grouped['Employee'] = grouped['Employee Name'].map(employee_id_map)
+            else:
+                # Si no existe la columna 'Employee', usa el índice de columna 2 si existe
+                try:
+                    third_column = df.columns[2]
+                    employee_id_map = df[[df.columns[1], third_column]].drop_duplicates().set_index(df.columns[1])[third_column].to_dict()
+                    grouped['Employee'] = grouped['Employee Name'].map(employee_id_map)
+                except (IndexError, KeyError):
+                    # Si no se puede obtener la columna, usa un valor por defecto
+                    grouped['Employee'] = ""
+            
             # Initial report DataFrame
-            report=pd.concat([grouped[['Employee Name','Shift','Day','Horas totales']], chec_df], axis=1)
+            report=pd.concat([grouped[['Employee', 'Employee Name','Shift','Day','Horas totales']], chec_df], axis=1)
             
             # Rename base columns
-            report.rename(columns={'Employee Name':'Nombre del empleado','Shift':'Turno','Day':'Día'}, inplace=True)
+            report.rename(columns={'Employee':'ID Empleado', 'Employee Name':'Nombre del empleado','Shift':'Turno','Day':'Día'}, inplace=True)
 
             # START OF CHANGES
             # Rename original 'Día' (which contains dates) to 'Fecha'
@@ -185,31 +203,54 @@ class CheckadorApp:
                 lambda x: dias_semana[x.weekday()] if pd.notnull(x) and hasattr(x, 'weekday') else ''
             )
 
-            # Reorder columns: Nombre, Turno, Fecha, Día, Horas totales, Checadas...
-            core_cols = ['Nombre del empleado', 'Turno', 'Fecha', 'Día', 'Horas totales']
+            # Reorder columns: ID Empleado, Nombre, Turno, Fecha, Día, Horas totales, Checadas...
+            core_cols = ['ID Empleado', 'Nombre del empleado', 'Turno', 'Fecha', 'Día', 'Horas totales']
             checada_cols_in_report = [col for col in report.columns if col.startswith('Checada ')]
             final_report_columns_ordered = core_cols + checada_cols_in_report
             report = report[final_report_columns_ordered]
             # END OF CHANGES
 
             # ── Totales por empleado + cálculo nuevo ──
-            summary = (grouped.groupby('Employee Name')
-                        .agg(first_day=('Day','min'), last_day=('Day','max'), # 'Day' here is original WorkDay
-                             days_worked=('Day','nunique'),
-                             total_timedelta=('total_timedelta','sum'))
-                        .reset_index())
+            # Modificamos el agrupamiento para incluir 'Employee' (ID del empleado)
+            if 'Employee' in grouped.columns:
+                summary = (grouped.groupby(['Employee', 'Employee Name'])
+                          .agg(first_day=('Day','min'), last_day=('Day','max'), # 'Day' here is original WorkDay
+                               days_worked=('Day','nunique'),
+                               total_timedelta=('total_timedelta','sum'))
+                          .reset_index())
+            else:
+                summary = (grouped.groupby('Employee Name')
+                          .agg(first_day=('Day','min'), last_day=('Day','max'), # 'Day' here is original WorkDay
+                               days_worked=('Day','nunique'),
+                               total_timedelta=('total_timedelta','sum'))
+                          .reset_index())
+                summary['Employee'] = ""  # Añadir columna vacía si no existe
+            
             summary['days_period'] = (summary['last_day'] - summary['first_day']).apply(lambda td: td.days + 1)
             summary['Horas trabajadas'] = summary['total_timedelta'].apply(fmt)
-            resumen_df = summary[['Employee Name','days_period','days_worked','Horas trabajadas']].rename(columns={
-                'Employee Name':'Nombre',
-                'days_period':'Días del periodo',
-                'days_worked':'Días trabajados'})
+            
+            # Incluir 'Employee' (ID) en el DataFrame de resumen
+            columns_to_select = ['Employee', 'Employee Name', 'days_period', 'days_worked', 'Horas trabajadas']
+            resumen_df = summary[columns_to_select].rename(columns={
+                'Employee': 'ID Empleado',
+                'Employee Name': 'Nombre',
+                'days_period': 'Días del periodo',
+                'days_worked': 'Días trabajados'})
 
             # filas totales para hoja principal
             total_rows=[]
             for _,r in resumen_df.iterrows():
+                # Obtener el ID del empleado para las filas de totales
+                emp_id = ""
+                if 'ID Empleado' in report.columns:
+                    # Buscar el ID correspondiente al nombre del empleado
+                    emp_rows = report[report['Nombre del empleado'] == r['Nombre']]
+                    if not emp_rows.empty:
+                        emp_id = emp_rows['ID Empleado'].iloc[0]
+                
                 # START OF CHANGES for total_rows dictionary
                 d = {
+                    'ID Empleado': emp_id,             # Añadir el ID del empleado
                     'Nombre del empleado': r['Nombre'],
                     'Turno': 'Totales',
                     'Fecha': int(r['Días trabajados']), # Count of days worked goes into 'Fecha' column for totals
@@ -273,8 +314,8 @@ class CheckadorApp:
             # marcar fila Totales sólo para hoja Detalle
             if ws.title=='Detalle':
                 for r in range(2, ws.max_row+1):
-                    # Column B (index 2) is 'Turno'
-                    if ws.cell(r,2).value=='Totales': 
+                    # Column C (index 3) is 'Turno' (after adding ID Empleado)
+                    if ws.cell(r,3).value=='Totales': 
                         for c in range(1, ws.max_column+1):
                             cell=ws.cell(r,c); cell.fill=total_fill; cell.font=bold_font; cell.border=thin
             
@@ -287,10 +328,12 @@ class CheckadorApp:
                 letter=col[0].column_letter
                 
                 # START OF CHANGE for column width
-                # A: Nombre, B: Turno, C: Fecha, D: Día (new)
-                if letter in ['A','B','C','D'] and length<15: 
-                    length=15
-                elif length < 12 : # Default min width for other columns like checadas
+                # A: ID Empleado, B: Nombre, C: Turno, D: Fecha, E: Día
+                if letter == 'A' and length < 10:  # ID Empleado
+                    length = 10
+                elif letter in ['B','C','D','E'] and length < 15:  # Nombre, Turno, Fecha, Día
+                    length = 15
+                elif length < 12:  # Default min width for other columns like checadas
                     length = 12
                 # END OF CHANGE for column width
                 ws.column_dimensions[letter].width=length
