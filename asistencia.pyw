@@ -8,7 +8,7 @@ from PIL import Image, ImageTk
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Border, Side
 
-pd.options.mode.chained_assignment = 'raise'
+pd.options.mode.chained_assignment = None # To avoid SettingWithCopyWarning, use with caution or .loc
 
 class CheckadorApp:
     def __init__(self, root):
@@ -54,7 +54,6 @@ class CheckadorApp:
 
         # logo
         try:
-            # Ensure "Logo_asia.png" is in the same directory as the script or provide a full path
             logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Logo_asia.png")
             if os.path.exists(logo_path):
                 img = Image.open(logo_path); w, h = img.size; nw = 200; nh = int(nw / w * h)
@@ -64,7 +63,6 @@ class CheckadorApp:
             print(f"Error loading logo: {e_logo}")
             pass
 
-        # banner
         banner = Frame(main, bg=self.primary_color, height=60); banner.pack(fill="x", pady=(0, 20))
         Label(banner, text="Procesador de Checadas de Empleados", font=("Segoe UI", 18, "bold"), bg=self.primary_color, fg="white").pack(pady=10)
 
@@ -86,12 +84,7 @@ class CheckadorApp:
         self.process_button.pack(pady=10)
         self.progress = ttk.Progressbar(actions, orient="horizontal", length=500, mode="indeterminate")
 
-    # ────────────  Cargar horas esperadas  ────────────
     def _load_expected_hours_data(self):
-        """
-        Carga el archivo CSV con las horas esperadas por empleado y día.
-        Expected CSV format: Employee (ID), Lunes (seconds), Martes (seconds), ...
-        """
         try:
             base_path = os.path.dirname(os.path.abspath(__file__))
             expected_hours_path = os.path.join(base_path, 'expected_hours_data.csv')
@@ -108,22 +101,17 @@ class CheckadorApp:
                     df_expected['Employee'] = pd.to_numeric(df_expected['Employee'], errors='coerce').fillna(0).astype(int)
                     for day_col in ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']:
                         if day_col in df_expected.columns:
-                            # Ensure these columns are numeric (expected to be seconds)
                             df_expected[day_col] = pd.to_numeric(df_expected[day_col], errors='coerce').fillna(0)
-                    print(f"Datos de horas esperadas cargados: {len(df_expected)} empleados. Columnas: {df_expected.columns.tolist()}")
-                    # print(df_expected.head()) # Optional: print head for debugging
                     return df_expected
                 else:
-                    print(f"Advertencia: Faltan columnas requeridas en el archivo de horas esperadas. Se esperaban: {required_cols}. Se encontraron: {df_expected.columns.tolist()}")
+                    print(f"Advertencia: Faltan columnas requeridas en horas esperadas. Esperadas: {required_cols}. Encontradas: {df_expected.columns.tolist()}")
             else:
-                messagebox.showwarning("Archivo no encontrado", f"No se encontró el archivo de horas esperadas en {expected_hours_path}. La columna 'Horas esperadas' será 0.")
-                print(f"Advertencia: No se encontró el archivo de horas esperadas en {expected_hours_path}")
+                messagebox.showwarning("Archivo no encontrado", f"No se encontró 'expected_hours_data.csv' en {expected_hours_path}.")
         except Exception as e:
-            messagebox.showerror("Error al cargar horas", f"Error al cargar horas esperadas: {e}\n{traceback.format_exc()}")
-            print(f"Error al cargar horas esperadas: {e}\n{traceback.format_exc()}")
+            messagebox.showerror("Error al cargar horas", f"Error al cargar 'expected_hours_data.csv': {e}")
+            print(f"Error al cargar 'expected_hours_data.csv': {e}\n{traceback.format_exc()}")
         return None
 
-    # ────────────  Utilidades de UI  ────────────
     def browse_file(self):
         fp = filedialog.askopenfilename(filetypes=[("Archivos Excel", "*.xlsx;*.xls"), ("Todos", "*.*")])
         if fp:
@@ -142,7 +130,6 @@ class CheckadorApp:
             self.process_button.configure(state="normal", text="Procesar Archivo", bg=self.secondary_color)
             self.progress.stop(); self.progress.pack_forget()
 
-    # ────────────  Diálogo de éxito con botón abrir  ────────────
     def _show_success_dialog(self, path: str):
         dlg = Toplevel(self.root); dlg.title("Proceso completado"); dlg.geometry("450x250"); dlg.resizable(False, False); dlg.configure(bg="white")
         content = Frame(dlg, bg="white", padx=20, pady=10); content.pack(fill="both", expand=True)
@@ -161,7 +148,7 @@ class CheckadorApp:
         Label(pf, text="Ubicación:", font=("Segoe UI", 10), bg="white").pack(side="left")
         Label(pf, text=short, font=("Segoe UI", 9), fg="#555", bg="white").pack(side="left")
         bf = Frame(content, bg="white"); bf.pack(fill="x", pady=10)
-        def _open_file_action(): # Renamed to avoid conflict with builtin open
+        def _open_file_action():
             try:
                 if os.name=='nt': os.startfile(path)
                 elif os.name=='posix': subprocess.call(('open' if os.path.exists('/usr/bin/open') else 'xdg-open', path))
@@ -173,7 +160,6 @@ class CheckadorApp:
         dlg.transient(self.root); dlg.grab_set(); dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
         dlg.update_idletasks(); w_dlg, h_dlg = dlg.winfo_width(), dlg.winfo_height(); x = (dlg.winfo_screenwidth()-w_dlg)//2; y = (dlg.winfo_screenheight()-h_dlg)//2; dlg.geometry(f"{w_dlg}x{h_dlg}+{x}+{y}")
 
-    # ────────────  Lógica principal  ────────────
     def generate_report(self):
         src = self.input_file_path.get().strip()
         if not src:
@@ -188,37 +174,38 @@ class CheckadorApp:
 
         try:
             self._toggle_busy(True); self._set_status("Procesando archivo...", "info")
-            df = pd.read_excel(src) # Original DataFrame from Excel
-            if {'Employee Name','Time'}.difference(df.columns):
+            df_excel = pd.read_excel(src) 
+            if {'Employee Name','Time'}.difference(df_excel.columns):
                 raise ValueError("Las columnas requeridas 'Employee Name' y 'Time' no se encontraron.")
             
-            # --- Initial Data Preparation ---
-            df_processed = df.copy() # Work on a copy
-            df_processed['Time'] = pd.to_datetime(df_processed['Time'], errors='coerce')
-            df_processed.dropna(subset=['Time'], inplace=True) # Remove rows where Time could not be parsed
+            df_proc = df_excel.copy()
+            df_proc['Time'] = pd.to_datetime(df_proc['Time'], errors='coerce')
+            df_proc.dropna(subset=['Time'], inplace=True)
 
-            df_processed['Day_raw'] = df_processed['Time'].dt.date
-            df_processed['WorkDay'] = df_processed.apply(lambda r: r['Day_raw'] - datetime.timedelta(days=1) if r['Time'].hour < 6 else r['Day_raw'], axis=1)
-            if 'Shift' not in df_processed.columns: df_processed['Shift'] = ''
-            df_processed['Shift'] = df_processed['Shift'].fillna('')
+            df_proc['Day_raw'] = df_proc['Time'].dt.date
+            df_proc['WorkDay'] = df_proc.apply(lambda r: r['Day_raw'] - datetime.timedelta(days=1) if r['Time'].hour < 6 else r['Day_raw'], axis=1)
+            if 'Shift' not in df_proc.columns: df_proc['Shift'] = ''
+            df_proc['Shift'] = df_proc['Shift'].fillna('')
 
-            # Separate records with shift and without
-            df_turno = df_processed[df_processed['Shift'] != ''].copy()
-            df_sin_turno = df_processed[df_processed['Shift'] == ''].copy()
-            df_sin_turno['Merged'] = False
+            df_turno = df_proc[df_proc['Shift'] != ''].copy()
+            df_sin_turno = df_proc[df_proc['Shift'] == ''].copy()
+            if not df_sin_turno.empty:
+                df_sin_turno.loc[:, 'Merged'] = False
 
-            # Group records with shift
+
             grouped = (df_turno.groupby(['Employee Name', 'Shift', 'WorkDay'])
                        .agg(checadas_list=('Time', lambda ts: sorted([pd.to_datetime(t) for t in ts if pd.notnull(t)])))
                        .reset_index())
 
-            # --- Merge records without shift into existing groups ---
             def merge_no_shift(gdf, ns_df):
                 res_df = gdf.copy()
-                if 'checadas_list' not in res_df.columns: # Should exist from previous agg
+                if 'checadas_list' not in res_df.columns:
                     res_df['checadas_list'] = [[] for _ in range(len(res_df))]
-                else: # Ensure all are lists
+                else:
                     res_df['checadas_list'] = res_df['checadas_list'].apply(lambda x: list(x) if isinstance(x, (list, pd.Series)) else [])
+
+                if ns_df.empty: 
+                    return res_df
 
                 for idx, row_ns in ns_df.iterrows():
                     time_to_add = pd.to_datetime(row_ns['Time'])
@@ -228,28 +215,25 @@ class CheckadorApp:
                         current_list = res_df.at[res_idx, 'checadas_list']
                         if time_to_add not in current_list:
                             res_df.at[res_idx, 'checadas_list'] = sorted(current_list + [time_to_add])
-                        ns_df.loc[idx, 'Merged'] = True # Mark as merged
+                        ns_df.loc[idx, 'Merged'] = True
                     else:
                         ns_df.loc[idx, 'Merged'] = False
-
-
+                
                 extra_df = ns_df[~ns_df['Merged']]
                 if not extra_df.empty:
                     add_df = (extra_df.groupby(['Employee Name', 'WorkDay'])
                               .agg(checadas_list=('Time', lambda ts: sorted([pd.to_datetime(t) for t in ts if pd.notnull(t)])))
                               .reset_index())
-                    add_df['Shift'] = '' # No shift for these new groups
+                    add_df['Shift'] = ''
                     res_df = pd.concat([res_df, add_df], ignore_index=True)
                 return res_df
 
             grouped = merge_no_shift(grouped, df_sin_turno)
-            grouped.rename(columns={'WorkDay': 'Fecha_raw'}, inplace=True) # This is the actual date of work
+            grouped.rename(columns={'WorkDay': 'Fecha_raw'}, inplace=True)
             grouped.sort_values(['Employee Name', 'Fecha_raw'], inplace=True)
 
-            # --- Calculate total worked hours (Timedelta) and format as HH:MM:SS string ---
             def calc_actual_worked_hours(lst_times):
                 if not lst_times or len(lst_times) < 2: return pd.Timedelta(0)
-                # Already ensured lst_times are sorted datetime objects
                 return lst_times[-1] - lst_times[0]
 
             grouped['total_timedelta_actual'] = grouped['checadas_list'].apply(calc_actual_worked_hours)
@@ -257,7 +241,6 @@ class CheckadorApp:
             fmt_timedelta_to_str = lambda td: f"{int(td.total_seconds()//3600):02d}:{int(td.total_seconds()%3600//60):02d}:{int(round(td.total_seconds()%60)):02d}" if pd.notnull(td) and td.total_seconds() > 0 else "00:00:00"
             grouped['Horas totales_str'] = grouped['total_timedelta_actual'].apply(fmt_timedelta_to_str)
 
-            # --- Prepare Checada columns ---
             grouped['Checadas_str_list'] = grouped['checadas_list'].apply(lambda ts: [t.strftime('%H:%M:%S') for t in ts if pd.notnull(t)])
             max_chec = grouped['Checadas_str_list'].str.len().max()
             if pd.isna(max_chec) or max_chec == 0: max_chec = 1
@@ -265,159 +248,189 @@ class CheckadorApp:
             chec_df_data = {}
             for i in range(int(max_chec)):
                 chec_df_data[f'Checada {i+1}'] = grouped['Checadas_str_list'].apply(lambda x: x[i] if i < len(x) else None)
-            chec_df = pd.DataFrame(chec_df_data, index=grouped.index) # Align index for concat
+            chec_df = pd.DataFrame(chec_df_data, index=grouped.index)
 
-            # --- Employee ID Mapping (from original df to grouped df) ---
-            # Using 'Employee Name' as key. Ensure 'Employee Name' exists in 'df' (original excel)
-            # And 'Employee' (ID column) exists in 'df'
-            if 'Employee' in df.columns and 'Employee Name' in df.columns:
-                # Create map from original df, ensure Employee Name is unique or take first ID
-                id_map = df[['Employee Name', 'Employee']].drop_duplicates('Employee Name').set_index('Employee Name')['Employee'].to_dict()
-                grouped['ID Empleado_val'] = grouped['Employee Name'].map(id_map)
+            if 'Employee' in df_excel.columns and 'Employee Name' in df_excel.columns:
+                # Use keep='first' to handle potential duplicate Employee Names in source, taking the first ID
+                id_map = df_excel[['Employee Name', 'Employee']].drop_duplicates('Employee Name', keep='first').set_index('Employee Name')['Employee'].to_dict()
+                grouped['ID Empleado_val'] = grouped['Employee Name'].map(id_map).fillna("") 
             else:
-                # Fallback: try to infer if 'Employee' column is missing but ID might be in another column
-                # This part depends heavily on the structure of the input Excel if 'Employee' column is absent
-                # For now, if 'Employee' column is not there, ID will be blank or from a prior assumption
-                grouped['ID Empleado_val'] = grouped.get('Employee', "") # .get if 'Employee' was from a previous step
+                grouped['ID Empleado_val'] = "" 
 
-            # --- Create the main report DataFrame ('Detalle' sheet) ---
             report_cols_from_grouped = ['ID Empleado_val', 'Employee Name', 'Shift', 'Fecha_raw', 'Horas totales_str']
-            # Ensure columns exist in grouped
             for col_name in report_cols_from_grouped:
                 if col_name not in grouped:
                     grouped[col_name] = None if col_name != 'Shift' else ''
-
-
+            
             report_df = pd.concat([grouped[report_cols_from_grouped], chec_df], axis=1)
             report_df.rename(columns={'ID Empleado_val': 'ID Empleado',
                                    'Employee Name': 'Nombre del empleado',
                                    'Shift': 'Turno',
-                                   'Fecha_raw': 'Fecha', # This is the actual date for the row
+                                   'Fecha_raw': 'Fecha',
                                    'Horas totales_str': 'Horas totales'}, inplace=True)
 
-
-            # --- Add Spanish Day Name ---
             report_df['Fecha'] = pd.to_datetime(report_df['Fecha'], errors='coerce')
             dias_semana = {0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves', 4: 'Viernes', 5: 'Sábado', 6: 'Domingo'}
             report_df['Día'] = report_df['Fecha'].apply(lambda x: dias_semana[x.weekday()] if pd.notnull(x) and hasattr(x, 'weekday') else '')
 
-            # --- Add "Horas esperadas" (as numeric seconds) ---
             def get_expected_seconds_for_day(row_data):
-                if self.expected_hours_df is None: return 0.0 # No expected hours data loaded
+                if self.expected_hours_df is None: return 0.0
                 try:
-                    # 'Turno' in row_data comes from 'report_df'
-                    if row_data.get('Turno') == 'Totales': return 0.0 # Don't calculate for summary rows yet
-                    
-                    # 'Fecha' and 'Día' (Spanish name) from row_data
+                    if row_data.get('Turno') == 'Totales': return 0.0
                     if not pd.notnull(row_data.get('Fecha')) or not hasattr(row_data['Fecha'], 'weekday'): return 0.0
                     
                     dia_semana_str = row_data.get('Día', '')
-                    if not dia_semana_str or dia_semana_str not in self.expected_hours_df.columns:
-                        return 0.0
+                    if not dia_semana_str or dia_semana_str not in self.expected_hours_df.columns: return 0.0
                     
-                    emp_id_str = str(row_data.get('ID Empleado', "")).strip()
-                    if not emp_id_str: return 0.0
+                    emp_id_str = str(row_data.get('ID Empleado', "")).strip() 
+                    if not emp_id_str: return 0.0 
                     
                     cache_key = f"{emp_id_str}_{dia_semana_str}"
-                    if cache_key in self.expected_hours_cache:
-                        return float(self.expected_hours_cache[cache_key])
+                    if cache_key in self.expected_hours_cache: return float(self.expected_hours_cache[cache_key])
                     
-                    try: # Convert emp_id_str to numeric for matching with 'Employee' column
-                        employee_id_num = int(float(emp_id_str)) 
-                    except ValueError:
-                        return 0.0 # Cannot convert to number for matching
+                    try: employee_id_num = int(float(emp_id_str)) 
+                    except ValueError: return 0.0
                         
                     emp_mask = self.expected_hours_df['Employee'] == employee_id_num
                     if not emp_mask.any():
                         self.expected_hours_cache[cache_key] = 0.0
                         return 0.0
                     
-                    # Get value (seconds) from the CSV data for that employee and day
-                    value_seconds = self.expected_hours_df.loc[emp_mask, dia_semana_str].iloc[0] # use iloc[0] for Series
+                    value_seconds = self.expected_hours_df.loc[emp_mask, dia_semana_str].iloc[0]
                     result_seconds = float(value_seconds) if pd.notnull(value_seconds) else 0.0
                     
                     self.expected_hours_cache[cache_key] = result_seconds
                     return result_seconds
-                except Exception as e_get_exp:
-                    # print(f"Error en get_expected_seconds_for_day para ID {row_data.get('ID Empleado', 'N/A')}, Día {dia_semana_str}: {e_get_exp}")
-                    return 0.0
+                except Exception: return 0.0
             
-            report_df['Horas esperadas'] = report_df.apply(get_expected_seconds_for_day, axis=1) # Numeric seconds
+            report_df['Horas esperadas'] = report_df.apply(get_expected_seconds_for_day, axis=1)
 
-            # --- Reorder columns for the "Detalle" sheet ---
             core_cols = ['ID Empleado', 'Nombre del empleado', 'Turno', 'Fecha', 'Día', 'Horas esperadas', 'Horas totales']
             checada_cols_in_report = sorted([col for col in report_df.columns if col.startswith('Checada ')], 
                                             key=lambda x: int(x.split(' ')[1]))
             final_report_columns_ordered = core_cols + checada_cols_in_report
             
-            # Ensure all final columns exist in report_df, add if missing (though they should be there)
             for col_name in final_report_columns_ordered:
-                if col_name not in report_df.columns:
-                    report_df[col_name] = None 
+                if col_name not in report_df.columns: report_df[col_name] = None 
             report_df = report_df[final_report_columns_ordered]
 
-
             # --- Summary DataFrame ("Resumen" sheet) ---
-            # Use 'grouped' for this summary as it has 'total_timedelta_actual'
-            summary_group_by_cols = ['ID Empleado_val', 'Employee Name'] \
-                if 'ID Empleado_val' in grouped.columns and grouped['ID Empleado_val'].notna().any() \
-                else ['Employee Name']
-
-            summary = (grouped.groupby(summary_group_by_cols)
-                       .agg(first_day_worked=('Fecha_raw', 'min'),
-                            last_day_worked=('Fecha_raw', 'max'),
-                            days_actually_worked=('Fecha_raw', 'nunique'),
-                            total_worked_time_sum=('total_timedelta_actual', 'sum'))
-                       .reset_index())
-
-            if 'ID Empleado_val' not in summary.columns: summary['ID Empleado_val'] = ""
+            summary_group_by_cols = []
+            if 'ID Empleado_val' in grouped.columns and grouped['ID Empleado_val'].notna().any():
+                id_empleado_str_series = grouped['ID Empleado_val'].astype(str).str.strip()
+                if id_empleado_str_series[id_empleado_str_series != ''].any():
+                    summary_group_by_cols.append('ID Empleado_val')
             
-            summary.rename(columns={'ID Empleado_val': 'ID Empleado', 'Employee Name': 'Nombre'}, inplace=True)
-            summary['Días del periodo'] = (summary['last_day_worked'] - summary['first_day_worked']).apply(lambda td: td.days + 1 if pd.notnull(td) else 0)
-            summary['Horas trabajadas_str_sum'] = summary['total_worked_time_sum'].apply(fmt_timedelta_to_str)
+            if 'Employee Name' in grouped.columns:
+                 summary_group_by_cols.append('Employee Name') 
             
-            resumen_df_cols = ['ID Empleado', 'Nombre', 'Días del periodo', 'days_actually_worked', 'Horas trabajadas_str_sum']
-            resumen_df = summary[resumen_df_cols].rename(columns={
-                'days_actually_worked': 'Días trabajados',
-                'Horas trabajadas_str_sum': 'Horas trabajadas'})
+            if not summary_group_by_cols: 
+                if 'Employee Name' not in grouped.columns: 
+                     raise ValueError("No se puede crear el resumen, falta 'Employee Name' en los datos agrupados.")
+                summary_group_by_cols = ['Employee Name']
 
 
-            # --- Create "Totales" rows to append to "Detalle" sheet ---
-            total_rows_for_detail_list = []
-            for _, r_summary_row in resumen_df.iterrows():
-                emp_name_for_total = r_summary_row['Nombre']
+            summary_actual_time = (grouped.groupby(summary_group_by_cols, dropna=False) 
+                                   .agg(total_worked_time_sum=('total_timedelta_actual', 'sum'),
+                                        first_day_worked=('Fecha_raw', 'min'),
+                                        last_day_worked=('Fecha_raw', 'max'),
+                                        days_actually_worked=('Fecha_raw', 'nunique'))
+                                   .reset_index())
+            
+            summary_for_merge = summary_actual_time.copy()
+            rename_map = {}
+            if 'ID Empleado_val' in summary_for_merge.columns:
+                rename_map['ID Empleado_val'] = 'ID Empleado'
+            if 'Employee Name' in summary_for_merge.columns: 
+                 rename_map['Employee Name'] = 'Nombre del empleado' 
+            if rename_map:
+                summary_for_merge.rename(columns=rename_map, inplace=True)
+
+            resumen_df = summary_for_merge 
+
+            if not report_df.empty and 'Horas esperadas' in report_df.columns and \
+               'ID Empleado' in report_df.columns and 'Nombre del empleado' in report_df.columns :
                 
-                # Sum numeric 'Horas esperadas' from daily records for this employee
-                # report_df contains daily details, including numeric 'Horas esperadas'
-                current_emp_daily_details = report_df[
-                    (report_df['Nombre del empleado'] == emp_name_for_total) &
-                    (report_df['Turno'] != 'Totales') # Exclude any pre-existing summary rows
-                ]
-                sum_numeric_expected_seconds_for_emp = pd.to_numeric(current_emp_daily_details['Horas esperadas'], errors='coerce').sum()
+                total_expected_seconds_per_employee = (report_df.groupby(['ID Empleado', 'Nombre del empleado'], dropna=False)
+                                                      ['Horas esperadas'].sum().reset_index())
+                total_expected_seconds_per_employee.rename(columns={'Horas esperadas': 'Total Segundos Esperados'}, inplace=True)
+                
+                merge_on_keys = []
+                # Standardize column names for merging
+                # Ensure 'ID Empleado' and 'Nombre del empleado' are the keys used in 'resumen_df' before merge
+                if 'ID Empleado' in resumen_df.columns and 'ID Empleado' in total_expected_seconds_per_employee.columns:
+                    merge_on_keys.append('ID Empleado')
+                if 'Nombre del empleado' in resumen_df.columns and 'Nombre del empleado' in total_expected_seconds_per_employee.columns:
+                    merge_on_keys.append('Nombre del empleado')
+                
+                if not merge_on_keys : # If one of the DFs doesn't have both, try with available ones
+                    if 'Nombre del empleado' in resumen_df.columns and 'Nombre del empleado' in total_expected_seconds_per_employee.columns:
+                        merge_on_keys = ['Nombre del empleado']
+                    elif 'ID Empleado' in resumen_df.columns and 'ID Empleado' in total_expected_seconds_per_employee.columns:
+                         merge_on_keys = ['ID Empleado']
+                    else:
+                        print("Advertencia: Claves de fusión insuficientes para horas esperadas en resumen.")
+                        resumen_df['Total Segundos Esperados'] = 0.0
+
+
+                if merge_on_keys: # Proceed if we have keys
+                    resumen_df = pd.merge(resumen_df, 
+                                          total_expected_seconds_per_employee, 
+                                          on=list(set(merge_on_keys)), 
+                                          how='left')
+                    resumen_df['Total Segundos Esperados'] = pd.to_numeric(resumen_df['Total Segundos Esperados'], errors='coerce').fillna(0)
+            else: 
+                resumen_df['Total Segundos Esperados'] = 0.0
+            
+            resumen_df.rename(columns={'Nombre del empleado': 'Nombre', 
+                                       'days_actually_worked': 'Días trabajados'}, inplace=True, errors='ignore')
+            if 'Nombre' not in resumen_df.columns and 'Employee Name' in resumen_df.columns:
+                 resumen_df.rename(columns={'Employee Name': 'Nombre'}, inplace=True)
+
+
+            resumen_df['Días del periodo'] = (resumen_df['last_day_worked'] - resumen_df['first_day_worked']).apply(lambda td: td.days + 1 if pd.notnull(td) else 0)
+            resumen_df['Horas trabajadas'] = resumen_df['total_worked_time_sum'].apply(fmt_timedelta_to_str)
+            resumen_df['Horas Trabajadas (Segundos)'] = resumen_df['total_worked_time_sum'].apply(lambda td: td.total_seconds() if pd.notnull(td) else 0)
+            
+            resumen_df['Total Segundos Esperados'] = pd.to_numeric(resumen_df['Total Segundos Esperados'], errors='coerce').fillna(0)
+            # ***** CAMBIO AQUÍ para invertir la diferencia *****
+            resumen_df['Diferencia (Segundos)'] = resumen_df['Horas Trabajadas (Segundos)'] - resumen_df['Total Segundos Esperados'] 
+            
+            resumen_df_cols_final = ['ID Empleado', 'Nombre', 'Días del periodo', 'Días trabajados', 
+                                     'Horas trabajadas', 'Horas Trabajadas (Segundos)', 
+                                     'Total Segundos Esperados', 'Diferencia (Segundos)']
+            
+            for col in resumen_df_cols_final: 
+                if col not in resumen_df.columns:
+                    resumen_df[col] = "" if col in ['ID Empleado', 'Nombre'] else 0.0
+            
+            resumen_df = resumen_df[resumen_df_cols_final]
+
+
+            total_rows_for_detail_list = []
+            for _, r_resumen_row in resumen_df.iterrows():
+                emp_name_for_total = r_resumen_row['Nombre']
+                sum_numeric_expected_seconds_for_emp = r_resumen_row['Total Segundos Esperados']
 
                 total_row_dict = {
-                    'ID Empleado': r_summary_row.get('ID Empleado', ""),
+                    'ID Empleado': r_resumen_row.get('ID Empleado', ""),
                     'Nombre del empleado': emp_name_for_total,
                     'Turno': 'Totales',
-                    'Fecha': int(r_summary_row['Días trabajados']) if pd.notnull(r_summary_row['Días trabajados']) else 0,
+                    'Fecha': int(r_resumen_row['Días trabajados']) if pd.notnull(r_resumen_row['Días trabajados']) else 0,
                     'Día': '', 
-                    'Horas esperadas': sum_numeric_expected_seconds_for_emp, # Sum of numeric daily expected seconds
-                    'Horas totales': r_summary_row['Horas trabajadas'] # HH:MM:SS sum of actual worked time from resumen_df
+                    'Horas esperadas': sum_numeric_expected_seconds_for_emp, 
+                    'Horas totales': r_resumen_row['Horas trabajadas'] 
                 }
-                # Add blank checada columns for the total row
-                for c_col in checada_cols_in_report:
-                    total_row_dict[c_col] = ''
+                for c_col in checada_cols_in_report: total_row_dict[c_col] = ''
                 total_rows_for_detail_list.append(total_row_dict)
             
             totals_to_append_df = pd.DataFrame(total_rows_for_detail_list)
             if not totals_to_append_df.empty:
-                totals_to_append_df = totals_to_append_df.reindex(columns=report_df.columns)
+                totals_to_append_df = totals_to_append_df.reindex(columns=report_df.columns) 
 
-
-            # --- Combine daily details with their "Totales" row in order ---
             final_detail_sheet_dfs = []
             if not report_df.empty:
-                report_df['Fecha'] = pd.to_datetime(report_df['Fecha'], errors='coerce') # Ensure datetime for sort
+                report_df['Fecha'] = pd.to_datetime(report_df['Fecha'], errors='coerce') 
                 for emp_name, daily_data_group in report_df.groupby('Nombre del empleado', sort=False):
                     final_detail_sheet_dfs.append(daily_data_group.sort_values('Fecha'))
                     
@@ -430,7 +443,6 @@ class CheckadorApp:
             else:
                 final_detail_report_df = pd.concat(final_detail_sheet_dfs, ignore_index=True)
 
-            # --- Write to Excel ---
             with pd.ExcelWriter(dst, engine='openpyxl') as writer:
                 final_detail_report_df.to_excel(writer, index=False, sheet_name='Detalle')
                 resumen_df.to_excel(writer, index=False, sheet_name='Resumen')
@@ -448,71 +460,68 @@ class CheckadorApp:
             messagebox.showerror("Error", f"Ocurrió un error inesperado:\n{e}\n\n{traceback.format_exc()}")
             print(traceback.format_exc())
 
-    # ────────────  Formato Excel  ────────────
     def _format_excel(self, path):
         wb=load_workbook(path)
         def _format_ws(ws):
             header_fill=PatternFill(start_color="3498DB", end_color="3498DB", fill_type="solid")
             header_font=Font(color="FFFFFF", bold=True)
-            total_fill=PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid") # Light gray for totals
+            total_fill=PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid") 
             bold_font=Font(bold=True)
             thin=Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
             
             if ws.max_row == 0: return
 
-            # Format header
             for c_idx_plus_1 in range(1, ws.max_column + 1):
                 cell = ws.cell(1, c_idx_plus_1)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.border = thin
+                cell.fill = header_fill; cell.font = header_font; cell.border = thin
             
-            # Format "Totales" rows in "Detalle" sheet
             if ws.title == 'Detalle':
                 turno_col_letter = None
-                # Find 'Turno' column letter dynamically
-                for cell_header in ws[1]: # ws[1] is the first row (header)
+                for cell_header in ws[1]: 
                     if cell_header.value == 'Turno':
-                        turno_col_letter = cell_header.column_letter
-                        break
+                        turno_col_letter = cell_header.column_letter; break
                 
                 if turno_col_letter:
-                    for r_idx_plus_1 in range(2, ws.max_row + 1): # Start from row 2
-                        # Access cell by letter and row index
+                    for r_idx_plus_1 in range(2, ws.max_row + 1): 
                         if ws[f"{turno_col_letter}{r_idx_plus_1}"].value == 'Totales':
                             for c_idx_plus_1_total in range(1, ws.max_column + 1):
                                 cell_total = ws.cell(r_idx_plus_1, c_idx_plus_1_total)
-                                cell_total.fill = total_fill
-                                cell_total.font = bold_font
-                                cell_total.border = thin
+                                cell_total.fill = total_fill; cell_total.font = bold_font; cell_total.border = thin
             
-            # Adjust column widths
-            for col_letter_obj in ws.columns: # ws.columns gives tuples of cells for each column
-                column_letter_str = col_letter_obj[0].column_letter # Get letter from first cell of column
-                
-                # Calculate max length for the column
+            for col_letter_obj in ws.columns: 
+                column_letter_str = col_letter_obj[0].column_letter
                 max_len = 0
                 for cell_in_col in col_letter_obj:
                     if cell_in_col.value is not None:
-                        try:
-                            max_len = max(max_len, len(str(cell_in_col.value)))
-                        except: pass # Ignore if len fails
+                        try: max_len = max(max_len, len(str(cell_in_col.value)))
+                        except: pass 
                 
-                adjusted_width = max_len + 2 # Basic padding
+                # Ensure there's a minimum padding, especially for numbers that might be short
+                # but whose headers are long.
+                adjusted_width = max_len + 3 
+                header_value = ws[f"{column_letter_str}1"].value 
 
-                # Specific widths based on header name (more robust)
-                header_value = ws[f"{column_letter_str}1"].value # Header value for this column
+                min_widths = {
+                    'ID Empleado': 12,
+                    'Nombre del empleado': 30,
+                    'Nombre': 30,
+                    'Turno': 10,
+                    'Fecha': 12,
+                    'Día': 12,
+                    'Horas esperadas': 20, # Numeric seconds, could be long
+                    'Horas totales': 15,   # HH:MM:SS
+                    'Horas trabajadas': 15, # HH:MM:SS
+                    'Horas Trabajadas (Segundos)': 22,
+                    'Total Segundos Esperados': 22,
+                    'Diferencia (Segundos)': 22,
+                    'Días del periodo': 18,
+                    'Días trabajados': 18
+                }
+                
+                # Default min width for checadas or other cols
+                default_min_width = 10 if str(header_value).startswith('Checada') else 12
 
-                if header_value == 'ID Empleado': adjusted_width = max(adjusted_width, 12)
-                elif header_value == 'Nombre del empleado': adjusted_width = max(adjusted_width, 30)
-                elif header_value == 'Nombre': adjusted_width = max(adjusted_width, 30) # For Resumen sheet
-                elif header_value == 'Turno': adjusted_width = max(adjusted_width, 10)
-                elif header_value == 'Fecha': adjusted_width = max(adjusted_width, 12)
-                elif header_value == 'Día': adjusted_width = max(adjusted_width, 12)
-                elif header_value in ['Horas esperadas', 'Horas totales', 'Horas trabajadas']: adjusted_width = max(adjusted_width, 15)
-                elif str(header_value).startswith('Checada'): adjusted_width = max(adjusted_width, 10)
-                elif header_value in ['Días del periodo', 'Días trabajados']: adjusted_width = max(adjusted_width, 18)
-                else: adjusted_width = max(adjusted_width, 12) # Default min width
+                adjusted_width = max(adjusted_width, min_widths.get(header_value, default_min_width))
                 
                 ws.column_dimensions[column_letter_str].width = adjusted_width
         
