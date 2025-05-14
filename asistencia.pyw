@@ -6,9 +6,9 @@ import traceback # Keep for debugging if needed
 from tkinter import Tk, Label, Button, Entry, StringVar, filedialog, Frame, ttk, messagebox, Toplevel
 from PIL import Image, ImageTk
 from openpyxl import load_workbook
-from openpyxl.styles import Font, PatternFill, Border, Side, Alignment # Alignment para centrar
-from openpyxl.utils import get_column_letter # Para obtener la letra de la columna
-# from scipy.stats import wilcoxon # <--- ELIMINADA ESTA IMPORTACIÓN
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment 
+from openpyxl.utils import get_column_letter 
+# from scipy.stats import wilcoxon # Eliminada
 
 pd.options.mode.chained_assignment = None 
 
@@ -19,41 +19,35 @@ class CheckadorApp:
         self.root.geometry("750x520")
         self.root.resizable(True, True)
 
-        # ────────────  Colores / estilos  ────────────
         self.primary_color   = "#2c3e50"
         self.secondary_color = "#3498db"
         self.bg_color        = "#f5f5f5"
         self.text_color      = "#333333"
         self.success_color   = "#27ae60"
-        self.warning_color   = "#f39c12" # Amarillo para negativos
+        self.warning_color   = "#f39c12" 
         self.error_color     = "#e74c3c"
-        self.orange_dark_color = "#E67E22" # Naranja oscuro para positivos
+        self.orange_dark_color = "#E67E22" 
 
         self.root.configure(bg=self.bg_color)
         self.expected_hours_df = self._load_expected_hours_data()
         self.expected_hours_cache = {}
 
-        # ────────────  Barra de estado  ────────────
         self.status_frame = Frame(root, bg="#e0e0e0", relief="ridge", bd=1)
         self.status_frame.pack(side="bottom", fill="x")
         self.status_label = Label(self.status_frame, text="Listo para procesar", font=("Segoe UI", 10),
                                   bg="#e0e0e0", fg=self.primary_color, padx=10, pady=8)
         self.status_label.pack(fill="x")
 
-        # ttk base
         style = ttk.Style()
         style.configure("TButton", font=("Segoe UI", 10))
         style.configure("TEntry",  font=("Segoe UI", 10))
         style.configure("TLabel",  font=("Segoe UI", 10), background=self.bg_color)
 
-        # ────────────  Vars  ────────────
         self.input_file_path = StringVar()
         self.output_file_name = StringVar(value=f"reporte_checador_{datetime.datetime.now().strftime('%d%m%Y')}")
 
-        # ────────────  Layout  ────────────
         main = Frame(root, bg=self.bg_color, padx=30, pady=20); main.pack(fill="both", expand=True)
 
-        # logo
         try:
             logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Logo_asia.png")
             if os.path.exists(logo_path):
@@ -62,7 +56,6 @@ class CheckadorApp:
                 Label(main, image=logo, bg=self.bg_color).pack(pady=(0, 15)); self._logo_ref = logo
         except Exception as e_logo:
             print(f"Error loading logo: {e_logo}")
-            pass
 
         banner = Frame(main, bg=self.primary_color, height=60); banner.pack(fill="x", pady=(0, 20))
         Label(banner, text="Procesador de Checadas de Empleados", font=("Segoe UI", 18, "bold"), bg=self.primary_color, fg="white").pack(pady=10)
@@ -233,7 +226,6 @@ class CheckadorApp:
             grouped['total_timedelta_actual'] = grouped['checadas_list'].apply(calc_actual_worked_hours)
             fmt_timedelta_to_str = lambda td: f"{int(td.total_seconds()//3600):02d}:{int(td.total_seconds()%3600//60):02d}:{int(round(td.total_seconds()%60)):02d}" if pd.notnull(td) and td.total_seconds() > 0 else "00:00:00"
             grouped['Horas totales_str'] = grouped['total_timedelta_actual'].apply(fmt_timedelta_to_str)
-            # No necesitamos 'Horas trabajadas_diarias_sec' en 'grouped' si no hacemos Wilcoxon por empleado sobre días
             
             grouped['Checadas_str_list'] = grouped['checadas_list'].apply(lambda ts: [t.strftime('%H:%M:%S') for t in ts if pd.notnull(t)])
             max_chec = grouped['Checadas_str_list'].str.len().max()
@@ -259,40 +251,51 @@ class CheckadorApp:
             report_df.rename(columns={'ID Empleado_val': 'ID Empleado',
                                    'Employee Name': 'Nombre del empleado',
                                    'Shift': 'Turno',
-                                   'Fecha_raw': 'Fecha',
+                                   'Fecha_raw': 'Fecha', # Fecha_raw (WorkDay) is now 'Fecha'
                                    'Horas totales_str': 'Horas totales'}, inplace=True)
 
-            report_df['Fecha'] = pd.to_datetime(report_df['Fecha'], errors='coerce')
+            # Ensure 'Fecha' is datetime.date objects for display, not full timestamps
+            report_df['Fecha'] = pd.to_datetime(report_df['Fecha'], errors='coerce').dt.date
+
+
             dias_semana = {0: 'Lunes', 1: 'Martes', 2: 'Miércoles', 3: 'Jueves', 4: 'Viernes', 5: 'Sábado', 6: 'Domingo'}
-            report_df['Día'] = report_df['Fecha'].apply(lambda x: dias_semana[x.weekday()] if pd.notnull(x) and hasattr(x, 'weekday') else '')
+            # Apply weekday to the 'Fecha' column (which should be date objects)
+            report_df['Día'] = pd.to_datetime(report_df['Fecha']).dt.weekday.map(dias_semana).fillna('')
+
 
             def get_expected_seconds_for_day(row_data):
                 if self.expected_hours_df is None: return 0.0
                 try:
-                    if row_data.get('Turno') == 'Totales': return 0.0
-                    if not pd.notnull(row_data.get('Fecha')) or not hasattr(row_data['Fecha'], 'weekday'): return 0.0
-                    dia_semana_str = row_data.get('Día', '')
+                    if row_data.get('Turno') == 'Totales': return 0.0 # Skip for total rows being built
+                    
+                    # 'Fecha' should be a date object here, 'Día' is the Spanish day name
+                    if not pd.notnull(row_data.get('Fecha')): return 0.0
+                    
+                    dia_semana_str = row_data.get('Día', '') # This is already the Spanish day name
                     if not dia_semana_str or dia_semana_str not in self.expected_hours_df.columns: return 0.0
+                    
                     emp_id_str = str(row_data.get('ID Empleado', "")).strip() 
                     if not emp_id_str: return 0.0 
+                    
                     cache_key = f"{emp_id_str}_{dia_semana_str}"
                     if cache_key in self.expected_hours_cache: return float(self.expected_hours_cache[cache_key])
+                    
                     try: employee_id_num = int(float(emp_id_str)) 
                     except ValueError: return 0.0
+                        
                     emp_mask = self.expected_hours_df['Employee'] == employee_id_num
                     if not emp_mask.any():
-                        self.expected_hours_cache[cache_key] = 0.0
-                        return 0.0
+                        self.expected_hours_cache[cache_key] = 0.0; return 0.0
+                    
                     value_seconds = self.expected_hours_df.loc[emp_mask, dia_semana_str].iloc[0]
                     result_seconds = float(value_seconds) if pd.notnull(value_seconds) else 0.0
+                    
                     self.expected_hours_cache[cache_key] = result_seconds
                     return result_seconds
                 except Exception: return 0.0
             
             report_df['Horas esperadas'] = report_df.apply(get_expected_seconds_for_day, axis=1)
             
-            # No necesitamos 'Diferencia_Diaria_Sec' en report_df si no hacemos Wilcoxon por empleado
-
             core_cols = ['ID Empleado', 'Nombre del empleado', 'Turno', 'Fecha', 'Día', 'Horas esperadas', 'Horas totales']
             checada_cols_in_report = sorted([col for col in report_df.columns if col.startswith('Checada ')], 
                                             key=lambda x: int(x.split(' ')[1]))
@@ -303,7 +306,6 @@ class CheckadorApp:
                 if col_name not in display_report_df.columns: display_report_df[col_name] = None 
             display_report_df = display_report_df[final_report_columns_ordered]
 
-            # --- Summary DataFrame ("Resumen" sheet) ---
             summary_actual = (grouped.groupby(['ID Empleado_val', 'Employee Name'])
                                .agg(total_worked_time_sum=('total_timedelta_actual', 'sum'),
                                     first_day_worked=('Fecha_raw', 'min'),
@@ -313,9 +315,13 @@ class CheckadorApp:
             summary_actual.rename(columns={'ID Empleado_val': 'ID Empleado', 'Employee Name': 'Nombre'}, inplace=True)
 
             if not report_df.empty and 'Horas esperadas' in report_df.columns:
+                # Use report_df for summing total expected seconds as it has ID Empleado and Nombre del empleado
+                # Group by the same columns used in summary_actual after its rename
                 total_expected_summary = (report_df.groupby(['ID Empleado', 'Nombre del empleado'])['Horas esperadas']
                                           .sum().reset_index(name='Total Segundos Esperados'))
+                # Rename 'Nombre del empleado' to 'Nombre' in total_expected_summary to match summary_actual for merge
                 total_expected_summary.rename(columns={'Nombre del empleado': 'Nombre'}, inplace=True)
+
                 resumen_df = pd.merge(summary_actual, total_expected_summary, on=['ID Empleado', 'Nombre'], how='left')
                 resumen_df['Total Segundos Esperados'] = resumen_df['Total Segundos Esperados'].fillna(0)
             else:
@@ -360,11 +366,16 @@ class CheckadorApp:
                 emp_name_for_total = r_resumen_row['Nombre'] 
                 sum_numeric_expected_seconds_for_emp = r_resumen_row['Total Segundos Esperados']
 
+                # For 'Fecha' in Totals row, ensure it's a date object if it needs to be,
+                # or format as string if just displaying days worked.
+                # Here, it's int(r_resumen_row['Días trabajados']), so it's fine as is.
+                dias_trabajados_val = int(r_resumen_row['Días trabajados']) if pd.notnull(r_resumen_row['Días trabajados']) else 0
+
                 total_row_dict = {
                     'ID Empleado': r_resumen_row.get('ID Empleado', ""),
                     'Nombre del empleado': emp_name_for_total, 
                     'Turno': 'Totales',
-                    'Fecha': int(r_resumen_row['Días trabajados']) if pd.notnull(r_resumen_row['Días trabajados']) else 0,
+                    'Fecha': dias_trabajados_val, # This is count of days, not a date for Totals row
                     'Día': '', 
                     'Horas esperadas': sum_numeric_expected_seconds_for_emp, 
                     'Horas totales': r_resumen_row['Horas trabajadas'] 
@@ -378,7 +389,9 @@ class CheckadorApp:
 
             final_detail_sheet_dfs = []
             if not display_report_df.empty: 
-                display_report_df['Fecha'] = pd.to_datetime(display_report_df['Fecha'], errors='coerce') 
+                # The 'Fecha' column in display_report_df should already be datetime.date objects
+                # If not, ensure it here:
+                # display_report_df['Fecha'] = pd.to_datetime(display_report_df['Fecha'], errors='coerce').dt.date
                 for emp_name, daily_data_group in display_report_df.groupby('Nombre del empleado', sort=False):
                     final_detail_sheet_dfs.append(daily_data_group.sort_values('Fecha'))
                     emp_total_row = totals_to_append_df[totals_to_append_df['Nombre del empleado'] == emp_name]
@@ -390,10 +403,21 @@ class CheckadorApp:
             else:
                 final_detail_report_df = pd.concat(final_detail_sheet_dfs, ignore_index=True)
 
+            # ***** CAMBIO AQUÍ: Formatear columna 'Fecha' ANTES de escribir en Excel *****
+            if 'Fecha' in final_detail_report_df.columns:
+                # Convert to datetime objects first (if they are not already, e.g. for 'Totales' rows)
+                # then format to string. For 'Totales' rows, 'Fecha' is an int (days worked), so handle it.
+                def format_fecha_col(val):
+                    if isinstance(val, (datetime.date, pd.Timestamp)):
+                        return val.strftime('%Y-%m-%d')
+                    return val # Return as is if not a date (e.g. int for 'Totales' row)
+                
+                final_detail_report_df['Fecha'] = final_detail_report_df['Fecha'].apply(format_fecha_col)
+
+
             with pd.ExcelWriter(dst, engine='openpyxl') as writer:
                 final_detail_report_df.to_excel(writer, index=False, sheet_name='Detalle')
                 resumen_df.to_excel(writer, index=False, sheet_name='Resumen')
-                # No hay hoja 'Analisis_Estadistico' si se eliminó la prueba general
 
             self._format_excel(dst, resumen_df) 
             self._toggle_busy(False); self._set_status("Reporte generado exitosamente", "success")
@@ -472,7 +496,6 @@ class CheckadorApp:
                     'Total Segundos Esperados': 22, 'Diferencia (Segundos)': 22, 
                     'Diferencia (HH:MM:SS)': 22, 
                     'Días del periodo': 18, 'Días trabajados': 18,
-                    # Columnas de Wilcoxon eliminadas de min_widths si no se generan
                 }
                 
                 default_min_width = 10 if str(header_value).startswith('Checada') else 12
