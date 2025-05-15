@@ -435,8 +435,8 @@ class CheckadorApp:
     def _format_excel(self, path, resumen_data_df=None):
         wb=load_workbook(path)
         
-        yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid") 
-        dark_orange_fill = PatternFill(start_color="FF8C00", end_color="FF8C00", fill_type="solid") 
+        yellow_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid") 
+        dark_orange_fill = PatternFill(start_color="1CC0EE", end_color="1CC0EE", fill_type="solid") 
 
         def _format_ws(ws, is_resumen_sheet=False, df_data_for_resumen=None):
             header_fill=PatternFill(start_color="3498DB", end_color="3498DB", fill_type="solid")
