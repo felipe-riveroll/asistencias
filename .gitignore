@@ -170,4 +170,10 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+<<<<<<< HEAD
 nuitka-crash-report.xml
+=======
+nuitka-crash-report.xml
+
+asistencia.*/
+>>>>>>> 234c2a2 (datos de brenda y monica)
