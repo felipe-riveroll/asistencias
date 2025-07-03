@@ -17,6 +17,47 @@ TABLE       = os.getenv("NOCODB_TABLE_NAME")
 LOCAL_DATA_FILE = "expected_hours_data.csv"
 LOCAL_METADATA_FILE = "expected_hours_metadata.json"
 
+def load_expected_hours_data():
+    """Carga el archivo CSV local con las horas esperadas."""
+    try:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        expected_hours_path = os.path.join(base_path, "expected_hours_data.csv")
+        if os.path.exists(expected_hours_path):
+            with open(expected_hours_path, "r", encoding="utf-8") as f:
+                first_line = f.readline().strip()
+                skip_rows = 1 if first_line.startswith("//") else 0
+            df_expected = pd.read_csv(expected_hours_path, skiprows=skip_rows)
+            required_cols = [
+                "Employee",
+                "Lunes",
+                "Martes",
+                "Miércoles",
+                "Jueves",
+                "Viernes",
+                "Sábado",
+                "Domingo",
+            ]
+            if all(col in df_expected.columns for col in required_cols):
+                df_expected["Employee"] = pd.to_numeric(
+                    df_expected["Employee"], errors="coerce"
+                ).fillna(0).astype(int)
+                for day_col in required_cols[1:]:
+                    if day_col in df_expected.columns:
+                        df_expected[day_col] = pd.to_numeric(
+                            df_expected[day_col], errors="coerce"
+                        ).fillna(0)
+                return df_expected
+            else:
+                print(
+                    "Advertencia: Faltan columnas en 'expected_hours_data.csv'. "
+                    f"Esperadas: {required_cols}."
+                )
+        else:
+            print("Advertencia: No se encontró 'expected_hours_data.csv'.")
+    except Exception as e:
+        print(f"Error cargando 'expected_hours_data.csv': {e}")
+    return None
+
 def get_data_hash(dataframe):
     """Genera un hash único para el contenido del DataFrame"""
     # Hacemos una copia para no modificar el DataFrame original
@@ -261,29 +302,3 @@ def fetch_expected_hours():
         else:
             raise Exception("No se pudieron obtener datos de la API ni localmente")
 
-# Ejemplo de uso:
-if __name__ == "__main__":
-    df_esperadas = fetch_expected_hours()
-    print("\n--- Datos obtenidos ---")
-    print(f"Total de filas: {len(df_esperadas)}")
-    print(f"Columnas disponibles: {df_esperadas.columns.tolist()}")
-    
-    # Mostrar los datos con nombres completos para días de la semana
-    df_display = df_esperadas.copy()
-    day_names_map = {
-        "L": "Lunes",
-        "M": "Martes",
-        "X": "Miércoles",
-        "J": "Jueves",
-        "V": "Viernes",
-        "S": "Sábado",
-        "D": "Domingo"
-    }
-    rename_cols = {col: day_names_map.get(col, col) for col in df_display.columns if col in day_names_map}
-    
-    if rename_cols:  # Solo renombrar si hay columnas para cambiar
-        df_display = df_display.rename(columns=rename_cols)
-        print("\nDatos con nombres completos de días:")
-    
-    print("\nPrimeras 5 filas:")
-    print(df_display.head())
